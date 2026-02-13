@@ -6,7 +6,7 @@ A stealth firewall that authenticates clients via hidden fields in TCP SYN packe
 The server runs a default-drop policy with zero network-visible responses — no RST, no ICMP, no open ports. 
 After a successful knock, the client IP gains full access for 24 hours.
 
-Unlike traditional multi-step port knocking, `simple_knock` uses **redundant single-step authentication**: the client sends N packets to random ports, and only **one** needs to arrive. 
+Unlike traditional multi-step port knocking, `knock` uses **redundant single-step authentication**: the client sends N packets to random ports, and only **one** needs to arrive. 
 This achieves 99.9%+ reliability even under 50% packet loss.
 
 ---
@@ -242,12 +242,7 @@ sudo nft list ruleset > /etc/sysconfig/nftables.conf
 ### Capture Knock Packets (match by window, MSS, or source port)
 
 ```bash
-sudo tcpdump -i eth0 -nn -vvv \
-  'tcp[tcpflags] & tcp-syn != 0 and (
-    src port 53909 or
-    tcp[14:2] = 0x7a69 or
-    tcp[20:4] = 0x020404d2
-  )'
+sudo tcpdump -i eth0 -nn -vvv 'tcp[tcpflags] & tcp-syn != 0 and (src port 53909 or tcp[14:2] = 0x7a69 or tcp[20:4] = 0x020404d2)'
 ```
 
 **Filter breakdown:**
@@ -268,8 +263,7 @@ sudo tcpdump -i eth0 -nn -vvv 'tcp[tcpflags] & tcp-syn != 0 and dst host IP'
 ### Capture with Hex Dump (deep inspection)
 
 ```bash
-sudo tcpdump -i eth0 -nn -XX -vvv \
-  'tcp[14:2] = 0x7a69' | head -100
+sudo tcpdump -i eth0 -nn -XX -vvv 'tcp[14:2] = 0x7a69' | head -100
 ```
 
 ---
