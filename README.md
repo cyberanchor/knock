@@ -323,16 +323,13 @@ sudo nft delete rule inet knock_filter input handle <N>
 ```bash
 # From client, after running knock.py:
 nc -vz IP 22      # SSH
-nc -vz IP 443     # HTTPS
-nc -vz IP 8443    # Custom service
-curl -sk https://IP:8443/
 ```
 
 ### Connectivity Audit
 
 ```bash
 # Server-side: confirm services are listening
-sudo ss -lntp | grep -E ':(22|443|5443|8443)\b'
+sudo ss -lntp | grep -E ':(22|443)\b'
 
 # Server-side: check Podman DNAT rules
 sudo nft list chain ip nat NETAVARK-HOSTPORT-DNAT 2>/dev/null
@@ -364,18 +361,3 @@ kill $ROLLBACK_PID 2>/dev/null
 
 # 5. If SSH dies, rollback fires automatically after 60s
 ```
-
----
-
-## Reliability
-
-Success probability for at least one packet arriving:
-
-| Packet Loss | 5 packets | 10 packets | 15 packets |
-|-------------|-----------|------------|------------|
-| 10% | 99.99% | ~100% | ~100% |
-| 30% | 83.2% | 97.2% | 99.5% |
-| **50%** | 96.9% | **99.9%** | 99.99% |
-| 70% | 83.2% | 97.2% | 99.5% |
-
-At 50% packet loss (observed on some VPS providers), 10 packets provide 99.9% knock success rate.
