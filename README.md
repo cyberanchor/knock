@@ -6,9 +6,6 @@ A stealth firewall that authenticates clients via hidden fields in TCP SYN packe
 The server runs a default-drop policy with zero network-visible responses — no RST, no ICMP, no open ports. 
 After a successful knock, the client IP gains full access for 24 hours.
 
-Unlike traditional multi-step port knocking, `knock` uses **redundant single-step authentication**: the client sends N packets to random ports, and only **one** needs to arrive. 
-This achieves 99.9%+ reliability even under 50% packet loss.
-
 ---
 
 ## How It Works
@@ -66,7 +63,7 @@ TCP Header:                   │ Offset  Field          Value        │
                               │ 18-19   Urgent Ptr     0x0000       │
                               ├─────────────────────────────────────┤
 TCP Options:                  │ 20      Kind           0x02 (MSS)   │
-                              │ 21      Length          0x04         │
+                              │ 21      Length          0x04        │
                               │ 22-23   MSS Value      0x04D2 (1234)│
                               └─────────────────────────────────────┘
 Total: 24 bytes TCP header (20 base + 4 MSS option)
@@ -98,14 +95,14 @@ sudo nft -f /etc/nftables/knock.nft        # apply
 sudo nft list table inet knock_filter
 ```
 
-### Client (any Linux with Python 3)
+### Client
 
 ```bash
 # Install scapy
 pip install scapy
 
 # Run knock (requires root for raw sockets)
-sudo python3 knock.py IP
+sudo python3 knock.py --debug IP
 
 # Then connect normally
 ssh user@IP
