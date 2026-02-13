@@ -18,8 +18,8 @@ Client                                          Server (nftables)
   │                                               │
   │  SYN to random port                           │
   │  sport=53909, mss=1234, window=31337          │
-  │──────────────────────────────────────────────► │
-  │              (×10 packets, 0.3s apart)         │
+  │─────────────────────────────────────────────► │
+  │              (×10 packets, 0.3s apart)        │
   │                                               │
   │  First packet arrives                         │
   │  ─► nftables matches window=31337             │
@@ -31,9 +31,9 @@ Client                                          Server (nftables)
   │                                               │
   │  Client connects normally                     │
   │  SSH / HTTPS / any port                       │
-  │──────────────────────────────────────────────► │
+  │─────────────────────────────────────────────► │
   │◄──────────────────────────────────────────────│
-  │              (connection established)          │
+  │              (connection established)         │
 ```
 
 ### Authentication Fields
