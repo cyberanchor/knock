@@ -1,0 +1,158 @@
+#!/usr/sbin/nft -f
+#
+# simple_knock — nftables single-step TCP SYN port knocking (IPv4)
+#
+# Architecture:
+#   Default-drop silent firewall with no REJECT/RST responses.
+#   Authentication via crafted TCP SYN fields (window size, MSS, source port).
+#   Client sends N redundant SYN packets to random destination ports;
+#   a single successful delivery grants full access for 24 hours.
+#
+# Authentication priority (first match wins):
+#   1. TCP window size  — survives NAT and MSS clamping (most reliable)
+#   2. TCP MSS option   — survives NAT, may be clamped by some ISPs
+#   3. TCP source port  — may be rewritten by carrier-grade NAT
+#
+# Packet flow:
+#   new SYN → banned? → try unban via auth fields
+#                     → else silent drop
+#           → match auth field? → add to @authed, drop SYN
+#           → no match → silent drop (default policy)
+#
+#   established/related → accept (stateful tracking)
+#   authed IP + new conn → accept all protocols
+#
+# Prerequisites:
+#   - Disable ICMP echo: net.ipv4.icmp_echo_ignore_all = 1
+#   - nftables >= 0.9.3 (RHEL 9 / AlmaLinux 9 compatible)
+#   - Podman/netavark manages its own ip nat/filter tables separately
+#
+# Reload:  nft -f /etc/nftables/knock.nft
+# Verify:  nft list table inet knock_filter
+# Test:    nft -c -f /etc/nftables/knock.nft   (dry-run syntax check)
+
+
+table inet knock_filter {
+
+  # ---------------------------------------------------------------
+  #  Shared secrets — rotate these values periodically
+  # ---------------------------------------------------------------
+  define KNOCK_SPORT  = 53909         # TCP source port  (16-bit, 0-65535)
+  define KNOCK_MSS    = 1234          # TCP MSS option   (16-bit, 0-65535)
+  define KNOCK_WIN    = 31337         # TCP window size  (16-bit, 0-65535)
+
+  # ---------------------------------------------------------------
+  #  Dynamic IP sets (kernel-managed, no userspace daemon)
+  # ---------------------------------------------------------------
+  set authed {
+    type ipv4_addr
+    size 65535
+    flags dynamic, timeout
+    timeout 24h                       # default TTL for authenticated IPs
+    comment "IPs that passed knock authentication"
+  }
+
+  set ban {
+    type ipv4_addr
+    size 65535
+    flags dynamic, timeout
+    timeout 5m                        # short ban to throttle brute-force
+    comment "IPs temporarily banned for incorrect knock attempts"
+  }
+
+  # ---------------------------------------------------------------
+  #  INPUT chain — all inbound traffic processing
+  # ---------------------------------------------------------------
+  chain input {
+    type filter hook input priority filter; policy drop;
+
+    # --- Stateful baseline ---
+    iif lo accept                                                comment "loopback: always accept"
+    ct state established,related accept                          comment "existing sessions: accept"
+    ct state invalid drop                                        comment "malformed packets: drop"
+
+    # --- Authenticated IP: full access (must precede knock rules) ---
+    ip saddr @authed ct state new \
+      log prefix "NFT|ALLOW|EV=authed_new|ip=" level notice flags all \
+      counter accept \
+      comment "authed IP: accept new connection on any port"
+
+    # --- Re-knock suppression (authed IP sends knock again) ---
+    # Silently drop to prevent log spam and accidental self-ban
+    ip saddr @authed tcp flags & (syn|ack|fin|rst) == syn tcp window $KNOCK_WIN ct state new \
+      counter drop \
+      comment "authed re-knock by window: silent drop"
+
+    ip saddr @authed tcp flags & (syn|ack|fin|rst) == syn ct state new \
+      tcp option maxseg size $KNOCK_MSS \
+      counter drop \
+      comment "authed re-knock by MSS: silent drop"
+
+    # --- Banned IP: unban via valid knock credentials ---
+    ip saddr @ban tcp flags & (syn|ack|fin|rst) == syn tcp window $KNOCK_WIN ct state new \
+      log prefix "NFT|KNOCK|EV=unban_win|ip=" level notice flags all counter \
+      delete @ban { ip saddr } add @authed { ip saddr timeout 24h } drop \
+      comment "banned IP: unban + auth via window"
+
+    ip saddr @ban tcp flags & (syn|ack|fin|rst) == syn ct state new \
+      tcp option maxseg size $KNOCK_MSS \
+      log prefix "NFT|KNOCK|EV=unban_mss|ip=" level notice flags all counter \
+      delete @ban { ip saddr } add @authed { ip saddr timeout 24h } drop \
+      comment "banned IP: unban + auth via MSS"
+
+    ip saddr @ban tcp flags & (syn|ack|fin|rst) == syn tcp sport $KNOCK_SPORT ct state new \
+      log prefix "NFT|KNOCK|EV=unban_sport|ip=" level notice flags all counter \
+      delete @ban { ip saddr } add @authed { ip saddr timeout 24h } drop \
+      comment "banned IP: unban + auth via source port"
+
+    # --- Banned IP: drop everything else ---
+    ip saddr @ban \
+      log prefix "NFT|KNOCK|EV=ban_drop|ip=" level notice flags all \
+      counter drop \
+      comment "banned IP: drop all non-knock traffic"
+
+    # --- Knock authentication: single-step, any destination port ---
+    # Match priority: window (most reliable) → MSS → source port
+
+    tcp flags & (syn|ack|fin|rst) == syn tcp window $KNOCK_WIN ct state new \
+      log prefix "NFT|KNOCK|EV=auth_win|ip=" level notice flags all counter \
+      add @authed { ip saddr timeout 24h } drop \
+      comment "knock auth: TCP window match"
+
+    tcp flags & (syn|ack|fin|rst) == syn ct state new \
+      tcp option maxseg size $KNOCK_MSS \
+      log prefix "NFT|KNOCK|EV=auth_mss|ip=" level notice flags all counter \
+      add @authed { ip saddr timeout 24h } drop \
+      comment "knock auth: TCP MSS option match"
+
+    tcp flags & (syn|ack|fin|rst) == syn tcp sport $KNOCK_SPORT ct state new \
+      log prefix "NFT|KNOCK|EV=auth_sport|ip=" level notice flags all counter \
+      add @authed { ip saddr timeout 24h } drop \
+      comment "knock auth: TCP source port match"
+
+    # --- Default policy: silent drop (no RST, no ICMP) ---
+  }
+
+  # ---------------------------------------------------------------
+  #  FORWARD chain — container (Podman/netavark) traffic control
+  # ---------------------------------------------------------------
+  chain forward {
+    type filter hook forward priority filter + 10; policy drop;
+
+    ct state established,related accept                          comment "container: existing sessions"
+    ct state invalid drop                                        comment "container: malformed packets"
+
+    iifname "podman0" accept                                     comment "container → internet: unrestricted egress"
+
+    oifname "podman0" ip saddr @authed accept \
+      comment "internet → container: only from authed IPs"
+  }
+
+  # ---------------------------------------------------------------
+  #  OUTPUT chain — unrestricted outbound from host
+  # ---------------------------------------------------------------
+  chain output {
+    type filter hook output priority filter; policy accept;
+    ct state invalid drop                                        comment "outbound: drop malformed"
+  }
+}
