@@ -1,6 +1,6 @@
-# simple_knock
+# knock
 
-**Single-step TCP SYN port knocking with nftables**
+**Simple single-step TCP SYN port knocking with nftables**
 
 A stealth firewall that authenticates clients via hidden fields in TCP SYN packets (window size, MSS option, source port). 
 The server runs a default-drop policy with zero network-visible responses — no RST, no ICMP, no open ports. 
