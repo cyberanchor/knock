@@ -43,12 +43,10 @@ def generate_ports(count, port_min, port_max):
     """
     Generate random unique destination ports, avoiding common service ports
     """
-   # avoid = {22}
     ports = set()
     while len(ports) < count:
         p = random.randint(port_min, port_max)
-    #    if p not in avoid:
-            ports.add(p)
+        ports.add(p)
     return list(ports)
 
 
